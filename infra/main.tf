@@ -9,9 +9,12 @@ terraform {
 }
 
 provider "azurerm" {
-  features {}
+  features {
+    resource_group {
+      prevent_deletion_if_contains_resources = false
+    }
+  }
 }
-
 variable "location" {
   type    = string
   default = "eastus2"
@@ -82,7 +85,7 @@ resource "azurerm_application_insights_standard_web_test" "site" {
 
 # ── The status API: consumption Function App ───────────────────────────────
 resource "azurerm_storage_account" "func" {
-  name                            = "stcolinstatusfunc"
+  name                            = "stcolinstatusfunc2"
   resource_group_name             = azurerm_resource_group.status.name
   location                        = azurerm_resource_group.status.location
   account_tier                    = "Standard"
