@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Status — colinshanahan.dev</title>
+<meta name="description" content="Live operational status of colinshanahan.dev — real telemetry from Azure Application Insights.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --mist:#EEF2F6;--paper:#FFF;--console:#0E1B2A;--slate:#52647A;--line:#D5DEE8;
+    --azure:#1B6DC1;--deploy:#1E9E6A;--deploy-soft:#E2F4EC;--warn:#D97E2B;--down:#C4453B;
+    --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;--display:'Space Grotesk',sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:var(--sans);background:var(--mist);color:var(--console);line-height:1.6;-webkit-font-smoothing:antialiased}
+  a{color:var(--azure);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:860px;margin:0 auto;padding:0 24px}
+  header{padding:56px 0 8px}
+  .crumb{font-family:var(--mono);font-size:.75rem;color:var(--slate)}
+  h1{font-family:var(--display);font-size:clamp(1.8rem,4vw,2.6rem);font-weight:700;letter-spacing:-.01em;margin-top:10px}
+  .sub{color:var(--slate);font-size:.95rem;margin-top:6px;max-width:56ch}
+
+  .hero-status{
+    margin:32px 0 22px;background:var(--paper);border:1px solid var(--line);border-radius:12px;
+    padding:26px 28px;display:flex;align-items:center;gap:16px;
+  }
+  .dot{width:16px;height:16px;border-radius:50%;background:var(--slate);flex:0 0 16px;position:relative}
+  .dot.ok{background:var(--deploy)}
+  .dot.ok::after{content:"";position:absolute;inset:-5px;border-radius:50%;border:2px solid var(--deploy);opacity:.35;animation:pulse 2s infinite}
+  .dot.warn{background:var(--warn)} .dot.down{background:var(--down)}
+  @keyframes pulse{0%{transform:scale(.8);opacity:.5}100%{transform:scale(1.5);opacity:0}}
+  @media (prefers-reduced-motion:reduce){.dot.ok::after{animation:none}}
+  .hero-status .msg{font-family:var(--display);font-size:1.3rem;font-weight:600}
+  .hero-status .meta{font-family:var(--mono);font-size:.72rem;color:var(--slate);margin-left:auto;text-align:right}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .cell{background:var(--paper);padding:22px}
+  .cell .n{font-family:var(--display);font-size:1.7rem;font-weight:700}
+  .cell .n em{font-style:normal;color:var(--deploy)}
+  .cell .l{font-family:var(--mono);font-size:.7rem;color:var(--slate);margin-top:4px}
+
+  section{margin:26px 0}
+  h2{font-family:var(--display);font-size:1.1rem;font-weight:600;margin-bottom:12px}
+  .panel{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:22px}
+  .spark{width:100%;height:120px;display:block}
+  .spark-cap{font-family:var(--mono);font-size:.68rem;color:var(--slate);margin-top:8px;display:flex;justify-content:space-between}
+
+  .deploy-row{display:flex;align-items:center;gap:14px;padding:12px 4px;border-bottom:1px solid var(--line);font-size:.9rem}
+  .deploy-row:last-child{border-bottom:none}
+  .deploy-row .st{font-family:var(--mono);font-size:.68rem;padding:2px 10px;border-radius:99px}
+  .st.success{background:var(--deploy-soft);color:var(--deploy)}
+  .st.failure{background:#FBE9E7;color:var(--down)}
+  .deploy-row .sha{font-family:var(--mono);font-size:.78rem;color:var(--azure)}
+  .deploy-row .when{font-family:var(--mono);font-size:.7rem;color:var(--slate);margin-left:auto}
+
+  .note{font-family:var(--mono);font-size:.7rem;color:var(--slate);margin:26px 0 50px}
+  .err{background:#FBE9E7;color:var(--down);border:1px solid #F0C4BF;border-radius:12px;padding:18px 22px;font-size:.9rem}
+  .skel{color:var(--slate);font-family:var(--mono);font-size:.8rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="crumb"><a href="/">← colinshanahan.dev</a> / status</div>
+    <h1>Live status</h1>
+    <p class="sub">Real telemetry, not a badge: Azure Application Insights pings this site every 5 minutes from three regions. This page queries it live through an Azure Function using a managed identity.</p>
+  </header>
+
+  <div id="app"><p class="skel">querying telemetry ...</p></div>
+
+  <p class="note">
+    stack: app insights availability tests → log analytics → azure function (managed identity, KQL) → this page ·
+    <a href="https://github.com/cjshanahan1228/portfolio-status">source on github</a>
+  </p>
+</div>
+
+<script>
+const API = "https://func-colinshanahan-status.azurewebsites.net/api/status";
+const app = document.getElementById("app");
+
+const fmtAgo = iso => {
+  const m = Math.round((Date.now() - new Date(iso)) / 60000);
+  if (m < 60) return m + "m ago";
+  if (m < 1440) return Math.round(m / 60) + "h ago";
+  return Math.round(m / 1440) + "d ago";
+};
+
+function sparkline(series) {
+  if (!series.length) return "";
+  const w = 800, h = 120, pad = 6;
+  const vals = series.map(p => p.ms);
+  const max = Math.max(...vals) * 1.15, min = 0;
+  const x = i => pad + (i / Math.max(series.length - 1, 1)) * (w - pad * 2);
+  const y = v => h - pad - ((v - min) / (max - min)) * (h - pad * 2);
+  const pts = series.map((p, i) => `${x(i)},${y(p.ms)}`).join(" ");
+  const area = `${pad},${h - pad} ${pts} ${x(series.length - 1)},${h - pad}`;
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Response time, last 24 hours">
+    <polygon points="${area}" fill="#1B6DC1" opacity="0.08"/>
+    <polyline points="${pts}" fill="none" stroke="#1B6DC1" stroke-width="2"/>
+  </svg>`;
+}
+
+fetch(API).then(r => r.json()).then(d => {
+  const s = d.site || {};
+  const cls = s.status === "operational" ? "ok" : s.status === "degraded" ? "warn" : "down";
+  const msg = s.status === "operational" ? "All systems operational"
+            : s.status === "degraded" ? "Partial degradation"
+            : s.status === "down" ? "Site down" : "Telemetry unavailable";
+
+  const deploys = (d.deploys || []).map(x => `
+    <div class="deploy-row">
+      <span class="st ${x.status}">${x.status}</span>
+      <a class="sha" href="${x.url}" rel="noopener">${x.sha}</a>
+      <span>${x.branch}</span>
+      <span class="when">${fmtAgo(x.when)}</span>
+    </div>`).join("") || '<p class="skel">no recent runs</p>';
+
+  app.innerHTML = `
+    <div class="hero-status">
+      <span class="dot ${cls}"></span>
+      <span class="msg">${msg}</span>
+      <span class="meta">checked from 3 regions<br>every 5 minutes</span>
+    </div>
+    <div class="grid">
+      <div class="cell"><div class="n"><em>${s.uptime24h ?? "–"}%</em></div><div class="l">uptime · 24h</div></div>
+      <div class="cell"><div class="n">${s.avgResponseMs ?? "–"} ms</div><div class="l">avg response · 24h</div></div>
+      <div class="cell"><div class="n">${s.checksLast24h ?? "–"}</div><div class="l">availability checks · 24h</div></div>
+      <div class="cell"><div class="n">${d.deploys?.[0] ? fmtAgo(d.deploys[0].when) : "–"}</div><div class="l">last deploy</div></div>
+    </div>
+    <section>
+      <h2>Response time — last 24 hours</h2>
+      <div class="panel">
+        ${sparkline(d.responseSeries || []) || '<p class="skel">series not available yet — availability data appears ~30 min after provisioning</p>'}
+        <div class="spark-cap"><span>24h ago</span><span>now</span></div>
+      </div>
+    </section>
+    <section>
+      <h2>Recent deployments</h2>
+      <div class="panel">${deploys}</div>
+    </section>`;
+}).catch(() => {
+  app.innerHTML = '<div class="err">Could not reach the status API. It may still be provisioning — or check the <a href="https://github.com/cjshanahan1228/portfolio-status">repo</a> for setup state.</div>';
+});
+</script>
+</body>
+</html>

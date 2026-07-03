@@ -1,0 +1,103 @@
+const { app } = require("@azure/functions");
+const { DefaultAzureCredential } = require("@azure/identity");
+const { LogsQueryClient, LogsQueryResultStatus } = require("@azure/monitor-query");
+
+// DefaultAzureCredential -> system-assigned managed identity in Azure.
+// No keys, no connection strings, nothing to rotate.
+const logsClient = new LogsQueryClient(new DefaultAzureCredential());
+
+const WORKSPACE_ID = process.env.LOG_ANALYTICS_WORKSPACE_ID;
+const GITHUB_REPO = process.env.GITHUB_REPO || "cjshanahan1228/portfolio-project-alpha";
+
+// 60s in-memory cache: keeps GitHub's unauthenticated rate limit (60/hr)
+// and Log Analytics query volume comfortable at portfolio traffic levels.
+let cache = { at: 0, body: null };
+const CACHE_MS = 60_000;
+
+async function queryAvailability() {
+  const summaryKql = `
+    availabilityResults
+    | where timestamp > ago(24h)
+    | summarize total = count(),
+                passed = countif(success == true),
+                avgMs = round(avg(duration), 0)`;
+
+  const seriesKql = `
+    availabilityResults
+    | where timestamp > ago(24h)
+    | summarize avgMs = round(avg(duration), 0) by bin(timestamp, 1h)
+    | order by timestamp asc`;
+
+  const [summary, series] = await Promise.all([
+    logsClient.queryWorkspace(WORKSPACE_ID, summaryKql, { duration: "P1D" }),
+    logsClient.queryWorkspace(WORKSPACE_ID, seriesKql, { duration: "P1D" }),
+  ]);
+
+  const site = { status: "unknown", uptime24h: null, avgResponseMs: null, checksLast24h: 0 };
+  if (summary.status === LogsQueryResultStatus.Success && summary.tables[0]?.rows.length) {
+    const cols = summary.tables[0].columnDescriptors.map((c) => c.name);
+    const row = Object.fromEntries(summary.tables[0].rows[0].map((v, i) => [cols[i], v]));
+    site.checksLast24h = Number(row.total) || 0;
+    if (site.checksLast24h > 0) {
+      site.uptime24h = Math.round((Number(row.passed) / site.checksLast24h) * 10000) / 100;
+      site.avgResponseMs = Number(row.avgMs);
+      site.status = site.uptime24h >= 99 ? "operational" : site.uptime24h >= 90 ? "degraded" : "down";
+    }
+  }
+
+  let responseSeries = [];
+  if (series.status === LogsQueryResultStatus.Success && series.tables[0]) {
+    const cols = series.tables[0].columnDescriptors.map((c) => c.name);
+    responseSeries = series.tables[0].rows.map((r) => {
+      const o = Object.fromEntries(r.map((v, i) => [cols[i], v]));
+      return { t: o.timestamp, ms: Number(o.avgMs) };
+    });
+  }
+
+  return { site, responseSeries };
+}
+
+async function queryDeploys() {
+  // Public repo -> unauthenticated is fine behind the cache.
+  const url = `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/deploy.yml/runs?per_page=5&status=completed`;
+  const res = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
+  if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+  const data = await res.json();
+  return (data.workflow_runs || []).map((r) => ({
+    sha: r.head_sha.slice(0, 7),
+    status: r.conclusion,
+    branch: r.head_branch,
+    when: r.updated_at,
+    url: r.html_url,
+  }));
+}
+
+app.http("status", {
+  methods: ["GET"],
+  authLevel: "anonymous",
+  handler: async (_req, context) => {
+    if (Date.now() - cache.at < CACHE_MS && cache.body) {
+      return { jsonBody: cache.body, headers: { "x-cache": "hit" } };
+    }
+
+    // Partial failure tolerance: a GitHub hiccup shouldn't take down uptime
+    // reporting, and vice versa. Each section degrades independently.
+    const [avail, deploys] = await Promise.allSettled([queryAvailability(), queryDeploys()]);
+
+    const body = {
+      generatedAt: new Date().toISOString(),
+      site:
+        avail.status === "fulfilled"
+          ? avail.value.site
+          : { status: "unknown", error: "telemetry query failed" },
+      responseSeries: avail.status === "fulfilled" ? avail.value.responseSeries : [],
+      deploys: deploys.status === "fulfilled" ? deploys.value : [],
+    };
+
+    if (avail.status === "rejected") context.error("availability query failed", avail.reason);
+    if (deploys.status === "rejected") context.warn("github query failed", deploys.reason);
+
+    cache = { at: Date.now(), body };
+    return { jsonBody: body };
+  },
+});

@@ -1,0 +1,52 @@
+# Deploys the status API to Azure Functions via OIDC — no stored cloud secrets.
+# Repo variables expected (from `terraform output` in infra/):
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+
+name: Deploy status API
+
+on:
+  push:
+    branches: [main]
+    paths: ["api/**"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install production dependencies
+        working-directory: api
+        run: npm install --omit=dev
+
+      - name: Package
+        working-directory: api
+        run: zip -r ../function.zip . -x "*.git*"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Function App
+        run: |
+          az functionapp deployment source config-zip \
+            --name func-colinshanahan-status \
+            --resource-group rg-portfolio-status \
+            --src function.zip
+
+      - name: Smoke test
+        run: |
+          sleep 30
+          curl -sf https://func-colinshanahan-status.azurewebsites.net/api/status | head -c 400

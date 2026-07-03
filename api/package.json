@@ -1,0 +1,12 @@
+{
+  "name": "portfolio-status-api",
+  "version": "1.0.0",
+  "description": "Live status API for colinshanahan.dev - queries App Insights via managed identity",
+  "main": "src/functions/*.js",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@azure/functions": "^4.5.0",
+    "@azure/identity": "^4.4.0",
+    "@azure/monitor-query": "^1.3.0"
+  }
+}
