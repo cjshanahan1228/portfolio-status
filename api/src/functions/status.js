@@ -22,8 +22,9 @@ async function queryAvailability() {
   const summaryKql = `
     availabilityResults
     | where timestamp > ago(24h)
+    | extend ok = tostring(success) in ("1", "true", "True")
     | summarize total = count(),
-                passed = countif(success == true),
+                passed = countif(ok),
                 avgMs = round(avg(duration), 0)`;
 
   const seriesKql = `
@@ -38,6 +39,7 @@ async function queryAvailability() {
   const currentKql = `
     availabilityResults
     | where timestamp > ago(30m)
+    | extend ok = tostring(success) in ("1", "true", "True")
     | summarize recentTotal = count(),
                 recentPassed = countif(success == true)`;
 
