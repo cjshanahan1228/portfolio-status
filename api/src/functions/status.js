@@ -41,7 +41,7 @@ async function queryAvailability() {
     | where timestamp > ago(30m)
     | extend ok = tostring(success) in ("1", "true", "True")
     | summarize recentTotal = count(),
-                recentPassed = countif(success == true)`;
+                recentPassed = countif(ok)`;
 
   const [summary, series, current] = await Promise.all([
     logsClient.queryResource(AI_RESOURCE_ID, summaryKql, { duration: "P1D" }),
