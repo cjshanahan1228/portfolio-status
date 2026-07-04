@@ -32,12 +32,23 @@ async function queryAvailability() {
     | summarize avgMs = round(avg(duration), 0) by bin(timestamp, 1h)
     | order by timestamp asc`;
 
-  const [summary, series] = await Promise.all([
+  // Banner status comes from the last 30 minutes — "are we up NOW" —
+  // while uptime24h stays an honest trailing average. A recovered site
+  // shouldn't wear a "down" banner for a day while old failures age out.
+  const currentKql = `
+    availabilityResults
+    | where timestamp > ago(30m)
+    | summarize recentTotal = count(),
+                recentPassed = countif(success == true)`;
+
+  const [summary, series, current] = await Promise.all([
     logsClient.queryResource(AI_RESOURCE_ID, summaryKql, { duration: "P1D" }),
     logsClient.queryResource(AI_RESOURCE_ID, seriesKql, { duration: "P1D" }),
+    logsClient.queryResource(AI_RESOURCE_ID, currentKql, { duration: "PT1H" }),
   ]);
 
   const site = { status: "unknown", uptime24h: null, avgResponseMs: null, checksLast24h: 0 };
+
   if (summary.status === LogsQueryResultStatus.Success && summary.tables[0]?.rows.length) {
     const cols = summary.tables[0].columnDescriptors.map((c) => c.name);
     const row = Object.fromEntries(summary.tables[0].rows[0].map((v, i) => [cols[i], v]));
@@ -45,7 +56,18 @@ async function queryAvailability() {
     if (site.checksLast24h > 0) {
       site.uptime24h = Math.round((Number(row.passed) / site.checksLast24h) * 10000) / 100;
       site.avgResponseMs = Number(row.avgMs);
-      site.status = site.uptime24h >= 99 ? "operational" : site.uptime24h >= 90 ? "degraded" : "down";
+    }
+  }
+
+  // Banner status = NOW (last 30 min of checks), not the 24h average.
+  if (current.status === LogsQueryResultStatus.Success && current.tables[0]?.rows.length) {
+    const ccols = current.tables[0].columnDescriptors.map((c) => c.name);
+    const crow = Object.fromEntries(current.tables[0].rows[0].map((v, i) => [ccols[i], v]));
+    const recentTotal = Number(crow.recentTotal) || 0;
+    const recentPassed = Number(crow.recentPassed) || 0;
+    if (recentTotal > 0) {
+      site.status =
+        recentPassed === recentTotal ? "operational" : recentPassed > 0 ? "degraded" : "down";
     }
   }
 
