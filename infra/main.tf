@@ -11,13 +11,19 @@ terraform {
 provider "azurerm" {
   features {
     resource_group {
+      # This RG is dedicated to this project; safe to take everything with it
+      # (Azure auto-creates things like the Smart Detection action group).
       prevent_deletion_if_contains_resources = false
     }
   }
 }
+
+data "azurerm_client_config" "current" {}
+
 variable "location" {
-  type    = string
-  default = "eastus2"
+  description = "Region for all resources. centralus has App Service quota on this subscription; eastus2 does not."
+  type        = string
+  default     = "centralus"
 }
 
 variable "site_url" {
@@ -77,15 +83,16 @@ resource "azurerm_application_insights_standard_web_test" "site" {
   }
 
   validation_rules {
-    expected_status_code = 200
-    ssl_check_enabled    = true
+    expected_status_code        = 200
+    ssl_check_enabled           = true
     ssl_cert_remaining_lifetime = 7 # fail the check if the cert is about to expire
   }
 }
 
 # ── The status API: consumption Function App ───────────────────────────────
 resource "azurerm_storage_account" "func" {
-  name                            = "stcolinstatusfunc2"
+  name = "stcolinstatusfunc2"
+
   resource_group_name             = azurerm_resource_group.status.name
   location                        = azurerm_resource_group.status.location
   account_tier                    = "Standard"
@@ -99,11 +106,11 @@ resource "azurerm_service_plan" "func" {
   resource_group_name = azurerm_resource_group.status.name
   location            = azurerm_resource_group.status.location
   os_type             = "Linux"
-  sku_name            = "Y1" # consumption — effectively free at this traffic
+  sku_name            = "Y1" # consumption
 }
 
 resource "azurerm_linux_function_app" "status" {
-  name                = "func-colinshanahan-status" # -> func-colinshanahan-status.azurewebsites.net
+  name                = "func-colinshanahan-status"
   resource_group_name = azurerm_resource_group.status.name
   location            = azurerm_resource_group.status.location
   service_plan_id     = azurerm_service_plan.func.id
@@ -112,7 +119,7 @@ resource "azurerm_linux_function_app" "status" {
   storage_account_access_key = azurerm_storage_account.func.primary_access_key
 
   identity {
-    type = "SystemAssigned" # this is how the API reads telemetry — no keys
+    type = "SystemAssigned"
   }
 
   site_config {
@@ -125,14 +132,26 @@ resource "azurerm_linux_function_app" "status" {
   }
 
   app_settings = {
-    FUNCTIONS_WORKER_RUNTIME              = "node"
+    FUNCTIONS_WORKER_RUNTIME = "node"
+    # Query the App Insights component store DIRECTLY (queryResource) —
+    # availability data verifiably lives there; workspace routing does not
+    # receive it on this resource.
+    APPINSIGHTS_RESOURCE_ID               = azurerm_application_insights.site.id
     LOG_ANALYTICS_WORKSPACE_ID            = azurerm_log_analytics_workspace.status.workspace_id
     GITHUB_REPO                           = "cjshanahan1228/colinshanahan.dev-portfolio"
     APPLICATIONINSIGHTS_CONNECTION_STRING = azurerm_application_insights.site.connection_string
   }
 }
 
-# Least privilege: the API may READ logs in this one workspace. Nothing else.
+# The API's identity may read monitoring data on the AI component — the
+# store queryResource() hits.
+resource "azurerm_role_assignment" "func_ai_reader" {
+  scope                = azurerm_application_insights.site.id
+  role_definition_name = "Monitoring Reader"
+  principal_id         = azurerm_linux_function_app.status.identity[0].principal_id
+}
+
+# Kept from the original workspace-query design; harmless, read-only.
 resource "azurerm_role_assignment" "func_logs_reader" {
   scope                = azurerm_log_analytics_workspace.status.id
   role_definition_name = "Log Analytics Reader"
@@ -162,8 +181,6 @@ resource "azurerm_role_assignment" "github_deployer" {
 }
 
 # ── Outputs ────────────────────────────────────────────────────────────────
-data "azurerm_client_config" "current" {}
-
 output "status_api_url" {
   value = "https://${azurerm_linux_function_app.status.default_hostname}/api/status"
 }

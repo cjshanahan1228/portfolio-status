@@ -6,11 +6,15 @@ const { LogsQueryClient, LogsQueryResultStatus } = require("@azure/monitor-query
 // No keys, no connection strings, nothing to rotate.
 const logsClient = new LogsQueryClient(new DefaultAzureCredential());
 
-const WORKSPACE_ID = process.env.LOG_ANALYTICS_WORKSPACE_ID;
-const GITHUB_REPO = process.env.GITHUB_REPO || "cjshanahan1228/portfolio-project-alpha";
+// Query the App Insights COMPONENT store directly via queryResource().
+// Lesson learned in production: on this resource, availability results are
+// visible in the component's own store (classic schema) but never arrive in
+// the linked Log Analytics workspace — so query where the data verifiably is.
+const AI_RESOURCE_ID = process.env.APPINSIGHTS_RESOURCE_ID;
+const GITHUB_REPO = process.env.GITHUB_REPO || "cjshanahan1228/colinshanahan.dev-portfolio";
 
 // 60s in-memory cache: keeps GitHub's unauthenticated rate limit (60/hr)
-// and Log Analytics query volume comfortable at portfolio traffic levels.
+// and query volume comfortable at portfolio traffic levels.
 let cache = { at: 0, body: null };
 const CACHE_MS = 60_000;
 
@@ -29,8 +33,8 @@ async function queryAvailability() {
     | order by timestamp asc`;
 
   const [summary, series] = await Promise.all([
-    logsClient.queryWorkspace(WORKSPACE_ID, summaryKql, { duration: "P1D" }),
-    logsClient.queryWorkspace(WORKSPACE_ID, seriesKql, { duration: "P1D" }),
+    logsClient.queryResource(AI_RESOURCE_ID, summaryKql, { duration: "P1D" }),
+    logsClient.queryResource(AI_RESOURCE_ID, seriesKql, { duration: "P1D" }),
   ]);
 
   const site = { status: "unknown", uptime24h: null, avgResponseMs: null, checksLast24h: 0 };
