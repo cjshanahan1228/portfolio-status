@@ -118,6 +118,12 @@ resource "azurerm_linux_function_app" "status" {
   storage_account_name       = azurerm_storage_account.func.name
   storage_account_access_key = azurerm_storage_account.func.primary_access_key
 
+  lifecycle {
+    ignore_changes = [
+      app_settings["WEBSITE_RUN_FROM_PACKAGE"],
+    ]
+  }
+
   identity {
     type = "SystemAssigned"
   }
