@@ -1,0 +1,30 @@
+name: Feature / improvement
+description: A planned change to the status API, dashboard, or monitoring infra
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should exist when this is done?
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: Approach
+      description: Rough plan — files, resources, or components involved.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - api
+        - web
+        - infra
+        - ci
+    validations:
+      required: true
