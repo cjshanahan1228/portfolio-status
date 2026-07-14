@@ -73,6 +73,15 @@ the page and API degrade gracefully until then.
 - **CORS is explicit.** Only the portfolio origins may call the API from a
   browser (Terraform `allowed_origins`).
 
+## Development workflow
+
+Every change is tracked end-to-end: GitHub issue → linked branch
+(`gh issue develop N --checkout`) → PR (title is a conventional commit) →
+squash-merge to protected `main`. Merging deploys via the workflow above and
+auto-publishes a semver tag + GitHub Release
+(`.github/workflows/release.yml`) — `feat:` bumps minor, `fix:` bumps patch,
+`!`/`BREAKING CHANGE` bumps major.
+
 ---
 
 Part of a portfolio built as working infrastructure:

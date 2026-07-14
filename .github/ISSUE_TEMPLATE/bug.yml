@@ -1,0 +1,18 @@
+name: Bug
+description: The status API, dashboard, or monitoring is misbehaving
+title: "fix: "
+labels: [bug]
+body:
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+      description: What happens instead — include function logs/CI output if relevant.
+    validations:
+      required: true
