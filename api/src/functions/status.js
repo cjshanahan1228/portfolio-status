@@ -85,20 +85,66 @@ async function queryAvailability() {
   return { site, responseSeries };
 }
 
+const DELIVERY_WINDOW_DAYS = 30;
+
+function median(values) {
+  if (!values.length) return null;
+  const s = [...values].sort((a, b) => a - b);
+  const mid = s.length >> 1;
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+// DORA metrics over the deploy workflow's own history. Exported for tests —
+// the arithmetic is the part worth pinning down, not the fetch.
+function deliveryMetrics(runs, now = Date.now()) {
+  const cutoff = now - DELIVERY_WINDOW_DAYS * 86_400_000;
+  const window = runs.filter((r) => Date.parse(r.updated_at) >= cutoff);
+  if (!window.length) return { windowDays: DELIVERY_WINDOW_DAYS, sample: 0 };
+
+  const succeeded = window.filter((r) => r.conclusion === "success");
+
+  // Merge -> live: the head commit of a deploy run is the squash commit, so
+  // this measures landing on main through to deployed. That is deliberately
+  // narrower than full DORA lead time (which starts at the first commit on
+  // the branch) — the page labels it as such rather than overclaiming.
+  const leadTimes = succeeded
+    .map((r) => Date.parse(r.updated_at) - Date.parse(r.head_commit?.timestamp))
+    .filter((ms) => Number.isFinite(ms) && ms >= 0);
+
+  return {
+    windowDays: DELIVERY_WINDOW_DAYS,
+    sample: window.length,
+    deploysPerWeek: Math.round((succeeded.length / DELIVERY_WINDOW_DAYS) * 7 * 10) / 10,
+    // Share of completed runs that failed — the honest denominator is every
+    // run that finished, not just the ones that worked.
+    changeFailureRate: Math.round(((window.length - succeeded.length) / window.length) * 1000) / 10,
+    leadTimeMinutes: leadTimes.length ? Math.round(median(leadTimes) / 60_000) : null,
+  };
+}
+
 async function queryDeploys() {
-  // Public repo -> unauthenticated is fine behind the cache.
-  const url = `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/deploy.yml/runs?per_page=5&status=completed`;
+  // ONE request serves both the recent list and the metrics: unauthenticated
+  // GitHub allows 60/hr, and the 60s cache already permits 60 misses/hr, so a
+  // second call here would put the ceiling at 120/hr and start 403ing.
+  const url = `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/deploy.yml/runs?per_page=100&status=completed`;
   const res = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
   if (!res.ok) throw new Error(`GitHub API ${res.status}`);
   const data = await res.json();
-  return (data.workflow_runs || []).map((r) => ({
-    sha: r.head_sha.slice(0, 7),
-    status: r.conclusion,
-    branch: r.head_branch,
-    when: r.updated_at,
-    url: r.html_url,
-  }));
+  const runs = data.workflow_runs || [];
+
+  return {
+    deploys: runs.slice(0, 5).map((r) => ({
+      sha: r.head_sha.slice(0, 7),
+      status: r.conclusion,
+      branch: r.head_branch,
+      when: r.updated_at,
+      url: r.html_url,
+    })),
+    delivery: deliveryMetrics(runs),
+  };
 }
+
+module.exports = { deliveryMetrics };
 
 app.http("status", {
   methods: ["GET"],
@@ -119,7 +165,8 @@ app.http("status", {
           ? avail.value.site
           : { status: "unknown", error: "telemetry query failed" },
       responseSeries: avail.status === "fulfilled" ? avail.value.responseSeries : [],
-      deploys: deploys.status === "fulfilled" ? deploys.value : [],
+      deploys: deploys.status === "fulfilled" ? deploys.value.deploys : [],
+      delivery: deploys.status === "fulfilled" ? deploys.value.delivery : null,
     };
 
     if (avail.status === "rejected") context.error("availability query failed", avail.reason);
