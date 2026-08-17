@@ -29,9 +29,13 @@ portfolio-status/
 ├── api/                    # Node 20 Azure Function (v4 model)
 │   └── src/functions/status.js
 ├── infra/main.tf           # AI + web test + Function App + OIDC deploy identity
-├── web/status.html         # the dashboard — copy into the portfolio's site/ folder
 └── .github/workflows/deploy.yml
 ```
+
+This repo owns the telemetry and the API. The dashboard **page** lives in the
+portfolio repo at
+[`site/status.html`](https://github.com/cjshanahan1228/colinshanahan.dev-portfolio/blob/main/site/status.html),
+which is where Static Web Apps serves it from — it is not duplicated here.
 
 ## Setup
 
@@ -48,10 +52,10 @@ terraform output   # note status_api_url + the three azure_* IDs
 
 # 4. Run the "Deploy status API" workflow (or push anything under api/).
 #    The workflow ends with a smoke test against the live endpoint.
-
-# 5. Copy web/status.html into the portfolio repo's site/ folder and push —
-#    live at colinshanahan.dev/status.html
 ```
+
+The page consuming this API is deployed from the portfolio repo
+(`site/status.html`), live at colinshanahan.dev/status.
 
 Availability data starts flowing ~15–30 minutes after `terraform apply`;
 the page and API degrade gracefully until then.
